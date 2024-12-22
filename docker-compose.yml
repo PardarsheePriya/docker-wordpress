@@ -1,0 +1,32 @@
+version: '3.8'
+
+services:
+  wordpress_site:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    environment:
+      WORDPRESS_DB_HOST: host.docker.internal:3306
+      WORDPRESS_DB_NAME: wordpress_site
+      WORDPRESS_DB_USER: root
+      WORDPRESS_DB_PASSWORD: root_password
+    volumes:
+      - ./wordpress:/var/www/html
+    networks:
+      - wp-shared-network
+
+  nginx_site:
+    image: nginx:latest
+    volumes:
+      - ./nginx/default-site.conf:/etc/nginx/conf.d/default.conf
+      - ./wordpress:/var/www/html
+    ports:
+      - "8080:80"
+    depends_on:
+      - wordpress_site
+    networks:
+      - wp-shared-network
+
+networks:
+  wp-shared-network:
+    driver: bridge
