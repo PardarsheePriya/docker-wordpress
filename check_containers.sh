@@ -3,6 +3,9 @@
 # Path to the output HTML file
 output_file="/usr/share/nginx/html/container_status.html"
 
+# Base domain for the container URLs
+base_domain="unitedzero.com"
+
 # Function to check if a container is active
 check_container_activity() {
     local container_name="$1"
@@ -15,7 +18,14 @@ check_container_activity() {
     fi
 }
 
-# Function to generate an HTML file with container statuses
+# Function to get the mapped port of a container (specific to nginx)
+get_container_ports() {
+    local container_name="$1"
+    docker ps --filter "name=$container_name" --format "{{.Ports}}" |
+    grep -oE '0.0.0.0:[0-9]+->80/tcp' | head -n 1 | cut -d ':' -f2 | cut -d '-' -f1
+}
+
+# Function to generate an HTML file with container statuses and URLs
 generate_html() {
     local containers
     containers=$(docker ps -a --format "{{.Names}}")
@@ -28,7 +38,7 @@ generate_html() {
     <title>Docker Container Status</title>
     <style>
         table {
-            width: 50%;
+            width: 70%;
             border-collapse: collapse;
             margin: 20px auto;
         }
@@ -48,14 +58,25 @@ generate_html() {
         <tr>
             <th>CONTAINER NAME</th>
             <th>STATUS</th>
+            <th>URL</th>
         </tr>
 EOF
 
     # Loop through each container and add rows to the table
     for container in $containers; do
         local status
+        local port
+        local url
         status=$(check_container_activity "$container")
-        echo "        <tr><td>$container</td><td>$status</td></tr>" >> "$output_file"
+        port=$(get_container_ports "$container")
+
+        if [[ -n "$port" ]]; then
+            url="http://$base_domain:$port"
+        else
+            url="N/A"
+        fi
+
+        echo "        <tr><td>$container</td><td>$status</td><td><a href='$url'>$url</a></td></tr>" >> "$output_file"
     done
 
     # End of HTML
