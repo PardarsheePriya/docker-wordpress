@@ -2,10 +2,9 @@
 
 # Prompt user for site details
 read -p "Enter the site name (e.g., site2): " SITE_NAME
-read -p "Enter the port number for Nginx (default 8080): " PORT
-PORT=${PORT:-8080}
+read -p "Enter the port number (e.g., 8081): " PORT
 
-# Save site name and port to the database
+# Save site name and port number to the database
 MYSQL_HOST="139.84.166.143"
 MYSQL_PORT="3306"
 MYSQL_USER="root"
@@ -30,20 +29,19 @@ fi
 # Define variables
 SITE_FOLDER="./sites/${SITE_NAME}"
 WORDPRESS_FOLDER="${SITE_FOLDER}/wordpress"
-NGINX_CONFIG_FOLDER="${SITE_FOLDER}/nginx"
-NGINX_CONFIG="${NGINX_CONFIG_FOLDER}/default-${SITE_NAME}.conf"
 DOCKER_COMPOSE_FILE="${SITE_FOLDER}/docker-compose-${SITE_NAME}.yml"
 DOCKERFILE="${SITE_FOLDER}/Dockerfile"
 WP_CONFIG="${WORDPRESS_FOLDER}/wp-config.php"
 DB_USER="${SITE_NAME}"
-DB_PASSWORD="${SITE_NAME}@${PORT}"  # Strong password combining site name and port
+DB_PASSWORD="${SITE_NAME}@2024"  # Strong password
+NGINX_CONF_DIR="/etc/nginx/sites-available"  # Directory for Nginx configuration files
+NGINX_CONF="${NGINX_CONF_DIR}/${SITE_NAME}.conf"  # Specific Nginx configuration file for this site
 SUBNET="192.168.$((RANDOM % 200 + 50)).0/24"  # Generate a unique subnet dynamically
 
 # Create the folder structure
 mkdir -p "${WORDPRESS_FOLDER}"
-mkdir -p "${NGINX_CONFIG_FOLDER}"
 
-# Download and extract WordPress into the wordpress folder
+# Download and extract WordPress
 wget https://wordpress.org/latest.zip -O "${WORDPRESS_FOLDER}/latest.zip"
 unzip "${WORDPRESS_FOLDER}/latest.zip" -d "${WORDPRESS_FOLDER}"
 mv "${WORDPRESS_FOLDER}/wordpress/"* "${WORDPRESS_FOLDER}"
@@ -102,33 +100,7 @@ EXPOSE 9000
 CMD ["php-fpm"]
 EOL
 
-# Create a custom Nginx configuration for the site
-cat <<EOL > "${NGINX_CONFIG}"
-server {
-    listen 80;
-    server_name localhost;
-
-    root /var/www/html;
-    index index.php index.html index.htm;
-
-    location / {
-        try_files \$uri \$uri/ /index.php?\$args;
-    }
-
-    location ~ \.php\$ {
-        include fastcgi_params;
-        fastcgi_pass wordpress_${SITE_NAME}:9000;
-        fastcgi_index index.php;
-        fastcgi_param SCRIPT_FILENAME \$document_root\$fastcgi_script_name;
-    }
-
-    location ~ /\.ht {
-        deny all;
-    }
-}
-EOL
-
-# Create a Docker Compose file for the WordPress site
+# Create a Docker Compose file for the WordPress container
 cat <<EOL > "${DOCKER_COMPOSE_FILE}"
 version: '3.8'
 
@@ -147,18 +119,6 @@ services:
     networks:
       - wp-shared-network
 
-  nginx_${SITE_NAME}:
-    image: nginx:latest
-    volumes:
-      - ./nginx/default-${SITE_NAME}.conf:/etc/nginx/conf.d/default.conf
-      - ./wordpress:/var/www/html
-    ports:
-      - "${PORT}:80"
-    depends_on:
-      - wordpress_${SITE_NAME}
-    networks:
-      - wp-shared-network
-
 networks:
   wp-shared-network:
     driver: bridge
@@ -167,10 +127,34 @@ networks:
         - subnet: ${SUBNET}
 EOL
 
+# Create a new Nginx configuration file for the site
+echo "Creating Nginx configuration for site..."
+cat <<EOL > "$NGINX_CONF"
+server {
+    listen ${PORT};
+    server_name unitedzero.com;
+
+    location / {
+        proxy_pass http://wordpress_${SITE_NAME}:9000;
+        proxy_set_header Host \$host;
+        proxy_set_header X-Real-IP \$remote_addr;
+        proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto \$scheme;
+    }
+}
+EOL
+
+# Enable the new site by creating a symlink in sites-enabled
+sudo ln -s "$NGINX_CONF" "/etc/nginx/sites-enabled/${SITE_NAME}.conf"
+
+# Reload Nginx to apply changes
+echo "Reloading Nginx..."
+sudo systemctl reload nginx
+
 # Prune old unused networks to avoid conflicts
 echo "Cleaning up unused Docker networks..."
 docker network prune -f
 
-# Start the containers
+# Start the WordPress container
 docker-compose -f "${DOCKER_COMPOSE_FILE}" up -d
-echo "Containers for site '${SITE_NAME}' are running on port ${PORT} with subnet ${SUBNET}."
+echo "Site '${SITE_NAME}' is accessible at http://unitedzero.com:${PORT}."
